@@ -11,13 +11,28 @@ call.
 """
 
 import logging
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.llm.client import LLMError, complete_json
 from app.models.threat import Direction, Movement, ThreatType
 
 logger = logging.getLogger(__name__)
+
+# The system prompt below explicitly tells the LLM to "leave the other fields
+# at their default/null" when relevant=False - so an explicit JSON null for
+# any of these is expected LLM output, not malformed output. Pydantic only
+# applies a field's default when the key is absent, never when it is present
+# and null, so without this these fields fail validation on every irrelevant
+# message and get treated as an LLM failure (see extract_message's fail-closed
+# comment) instead of the ordinary, expected case it actually is.
+_NULLABLE_DEFAULTS = {
+    "threat_type": ThreatType.UNKNOWN,
+    "movement": Movement.UNKNOWN,
+    "direction": Direction.UNKNOWN,
+    "confidence": 0.0,
+}
 
 
 class MessageExtraction(BaseModel):
@@ -31,6 +46,16 @@ class MessageExtraction(BaseModel):
     movement: Movement = Movement.UNKNOWN
     direction: Direction = Direction.UNKNOWN
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_means_default(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return {
+            key: (_NULLABLE_DEFAULTS[key] if key in _NULLABLE_DEFAULTS and value is None else value)
+            for key, value in data.items()
+        }
 
 
 _SYSTEM_PROMPT = """You read one private message reporting on the situation in Ukraine. \

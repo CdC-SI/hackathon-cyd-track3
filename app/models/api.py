@@ -4,14 +4,32 @@ These do validate untrusted input, which is why they are Pydantic models.
 Every string produced here is English.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.threat import ThreatLevel
 
 NEED_LOCATION_ADVICE = "Please specify the Ukrainian city you are currently in."
+
+
+def _to_naive_utc(value: datetime) -> datetime:
+    """Every datetime in this app is naive (see app/db/schema.py: all
+    columns are TIMESTAMP, not TIMESTAMPTZ, and nothing else in the app ever
+    attaches a timezone). A client that supplies an explicit UTC offset is
+    converted to the equivalent UTC instant and the offset dropped; a naive
+    value is trusted as-is, per the same no-offset convention. Without this,
+    an aware value reaching app/threat/aggregator.py's `as_of - last_seen`
+    (last_seen is always naive, straight from the DB) raises
+    TypeError: can't subtract offset-naive and offset-aware datetimes.
+    """
+    if value.tzinfo is None:
+        return value
+    try:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    except OverflowError as exc:
+        raise ValueError("datetime out of range when converted to UTC") from exc
 
 
 class MessageRequest(BaseModel):
@@ -19,6 +37,8 @@ class MessageRequest(BaseModel):
 
     text: str = Field(min_length=1)
     timestamp: datetime
+
+    _timestamp_naive_utc = field_validator("timestamp")(_to_naive_utc)
 
 
 class MessageResponse(BaseModel):
@@ -41,6 +61,8 @@ class AdviseRequest(BaseModel):
     query: str = Field(min_length=1)
     as_of: datetime
     location: LocationInput | None = None
+
+    _as_of_naive_utc = field_validator("as_of")(_to_naive_utc)
 
 
 class AdviseResponse(BaseModel):
