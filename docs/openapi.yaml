@@ -1,0 +1,300 @@
+openapi: 3.1.0
+info:
+  title: Aerial threat advisor
+  description: >
+    Advises on the aerial threat level in Ukraine at a given place and time.
+  version: 0.1.0
+
+paths:
+  /message:
+    post:
+      summary: Submit a raw monitoring message for ingestion
+      operationId: receiveMessage
+      description: >
+        Accepts one private report for background extraction (LLM) and, if a
+        threat is found and its location resolves to a known city, records a
+        ThreatEvent. The response deliberately never reveals whether the
+        message was relevant or whether an event was created, so the endpoint
+        cannot be used to probe the extractor.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageRequest"
+            example:
+              text: "Реактивний БпЛА на Brovary з півночі."
+              timestamp: "2026-08-26T22:40:00"
+      responses:
+        "200":
+          description: Message accepted for processing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+              example:
+                status: "accepted"
+        "422":
+          description: Validation error (e.g. empty text).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPValidationError"
+
+  /advise:
+    post:
+      summary: Get the current threat advice for a place and time
+      operationId: advise
+      description: >
+        Resolves a city (either from `location.text` or extracted from
+        `query`), then evaluates active sirens and recent private threat
+        signals for that city at `as_of`. If no city can be resolved, sirens
+        and threat events are never evaluated and the response comes back
+        with `status: "need_location"` and every threat field set to null -
+        an unresolved city must never read as a safe one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdviseRequest"
+            example:
+              query: "Is it safe right now?"
+              as_of: "2026-08-26T22:42:00"
+              location:
+                text: "Brovary"
+      responses:
+        "200":
+          description: Advice computed (or a request to specify a location).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdviseResponse"
+              examples:
+                clear:
+                  summary: No known threat (CLEAR)
+                  value:
+                    status: "ok"
+                    advice: "No current threat is known for this area at the requested time."
+                    as_of: "2026-08-26T22:42:00"
+                    area: "Brovary, Brovary urban hromada, Brovary Raion, Kyiv Oblast"
+                    siren_active: false
+                    citations: []
+                    threat_level: "CLEAR"
+                caution:
+                  summary: Corroborated private signal, no active siren (CAUTION)
+                  value:
+                    status: "ok"
+                    advice: "An aerial threat is reported near your area. Stay alert and be ready to take shelter if the situation changes."
+                    as_of: "2026-08-26T22:42:00"
+                    area: "Brovary, Brovary urban hromada, Brovary Raion, Kyiv Oblast"
+                    siren_active: false
+                    citations: []
+                    threat_level: "CAUTION"
+                alert:
+                  summary: Active official siren (ALERT)
+                  value:
+                    status: "ok"
+                    advice: "An official air-raid alert is active for your area. An aerial threat is reported approaching your area. The threat is approaching from the north-east. Go to shelter now and stay away from windows."
+                    as_of: "2026-08-26T22:42:00"
+                    area: "Brovary, Brovary urban hromada, Brovary Raion, Kyiv Oblast"
+                    siren_active: true
+                    citations:
+                      - "S-02247"
+                    threat_level: "ALERT"
+                need_location:
+                  summary: City could not be resolved
+                  value:
+                    status: "need_location"
+                    advice: "Please specify the Ukrainian city you are currently in."
+                    as_of: "2026-08-26T22:42:00"
+                    area: null
+                    siren_active: null
+                    citations: null
+                    threat_level: null
+        "422":
+          description: Validation error (e.g. empty query, malformed as_of).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPValidationError"
+
+  /health:
+    get:
+      summary: Liveness probe
+      operationId: health
+      description: Returns 200 only if the API is up and can reach the database.
+      responses:
+        "200":
+          description: API and database are reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                example:
+                  status: "ok"
+        "503":
+          description: Database unreachable.
+
+components:
+  schemas:
+    HTTPValidationError:
+      type: object
+      description: Default FastAPI/Pydantic validation error shape.
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            properties:
+              loc:
+                type: array
+                items:
+                  anyOf:
+                    - type: string
+                    - type: integer
+              msg:
+                type: string
+              type:
+                type: string
+
+    ThreatLevel:
+      type: string
+      description: |
+        Deterministic verdict combining official sirens with aggregated
+        private signals. An active siren always wins and forces ALERT; a
+        strong inbound private signal can also raise the level to ALERT;
+        any other inbound/nearby signal raises it to CAUTION; otherwise CLEAR.
+        Rules are applied in that order (siren > strong signal > weak signal > clear).
+      enum:
+        - ALERT
+        - CAUTION
+        - CLEAR
+      example: "CLEAR"
+
+    MessageRequest:
+      type: object
+      required: [text, timestamp]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: Raw monitoring message text. Treated as data, never as an instruction.
+        timestamp:
+          type: string
+          format: date-time
+          description: >
+            When the message was observed. An explicit UTC offset is
+            converted to the equivalent UTC instant and the offset dropped;
+            a naive value is trusted as-is (the app stores every datetime
+            without a timezone).
+
+    MessageResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [accepted]
+          description: >
+            Deliberately uninformative: it never reveals whether the
+            message was relevant or created an event.
+
+    LocationInput:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: Free-text place name to resolve to a known city.
+
+    AdviseRequest:
+      type: object
+      required: [query, as_of]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          description: >
+            The caller's own question. Used to extract a location via the
+            LLM only when `location` is not supplied.
+        as_of:
+          type: string
+          format: date-time
+          description: >
+            Instant to evaluate the threat for. Required (no "now" default).
+            An explicit UTC offset is converted to the equivalent UTC
+            instant and the offset dropped.
+        location:
+          $ref: "#/components/schemas/LocationInput"
+          description: >
+            Optional explicit location. When present it is resolved
+            directly and `query` is not used to extract a place.
+
+    AdviseResponse:
+      type: object
+      description: >
+        Advice for a location and an instant. `status` distinguishes a real
+        assessment ("ok") from the case where no city could be resolved
+        ("need_location"); in the latter case every threat field below is
+        null rather than holding made-up values.
+      required:
+        - status
+        - advice
+        - as_of
+      properties:
+        status:
+          type: string
+          enum: [ok, need_location]
+        advice:
+          type: string
+          description: >
+            Deterministic, template-built sentence(s) - never LLM-generated.
+            Assembled from, in order: an "official air-raid alert is active"
+            sentence when siren_active is true, a sentence describing the
+            single most confident non-absent private signal (plus a
+            direction sentence when that signal is inbound with a known
+            direction), and finally a fixed action sentence for the
+            threat_level. It is therefore not a fixed 1-to-1 string per
+            threat_level and can vary between two responses at the same level.
+          example: "No current threat is known for this area at the requested time."
+        as_of:
+          type: string
+          format: date-time
+          description: Echo of the request's as_of, normalized to naive UTC.
+          example: "2026-08-26T22:42:00"
+        area:
+          type: [string, "null"]
+          description: >
+            "City, hromada, raion, oblast" (each part omitted when absent,
+            e.g. for Kyiv or Sevastopol which belong to no raion/hromada).
+            Null when status is "need_location".
+          example: "Brovary, Brovary urban hromada, Brovary Raion, Kyiv Oblast"
+        siren_active:
+          type: [boolean, "null"]
+          description: >
+            Whether an official siren currently covers the resolved area
+            (oblast-, raion-, or hromada-level). Null when status is
+            "need_location".
+          example: false
+        citations:
+          type: [array, "null"]
+          description: >
+            siren_id values (verbatim from sirens.csv) of the official
+            sirens currently active over the resolved area - never derived
+            from private signals. Empty (not null) when status is "ok" and
+            no siren is active. Null when status is "need_location".
+          items:
+            type: string
+          example: ["S-02247"]
+        threat_level:
+          description: Null when status is "need_location".
+          oneOf:
+            - $ref: "#/components/schemas/ThreatLevel"
+            - type: "null"
