@@ -52,7 +52,9 @@ class LocationResolver:
     def __init__(self, conn: Connection):
         self._conn = conn
 
-    def resolve(self, text: str) -> CanonicalLocation | None:
+    def resolve(self, text: str, model: str | None = None) -> CanonicalLocation | None:
+        """`model` picks which LLM answers the shortlist-selection call, if
+        one is needed - see complete_json."""
         candidates = self._load_candidates()
 
         exact = _exact_match(text, candidates)
@@ -63,7 +65,7 @@ class LocationResolver:
         if not shortlist:
             return None
 
-        chosen_id = _select_via_llm(text, shortlist)
+        chosen_id = _select_via_llm(text, shortlist, model)
         if chosen_id is None:
             return None
 
@@ -123,7 +125,7 @@ def _shortlist(text: str, candidates: list[LocationRow]) -> list[LocationRow]:
     return [row for _score, row in scored[:SHORTLIST_SIZE]]
 
 
-def _select_via_llm(text: str, shortlist: list[LocationRow]) -> int | None:
+def _select_via_llm(text: str, shortlist: list[LocationRow], model: str | None = None) -> int | None:
     options = [{"id": row.id, "city": row.city, "city_uk": row.city_uk} for row in shortlist]
     system = (
         "You match free text to a Ukrainian city from a fixed list of candidates. "
@@ -137,7 +139,7 @@ def _select_via_llm(text: str, shortlist: list[LocationRow]) -> int | None:
         f"---\n{text}\n---"
     )
     try:
-        choice = complete_json(system=system, user=user, schema=_LocationChoice)
+        choice = complete_json(system=system, user=user, schema=_LocationChoice, model=model)
     except LLMError as exc:
         logger.warning("location resolution LLM call failed, treating as unresolved: %s", exc)
         return None

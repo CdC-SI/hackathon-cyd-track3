@@ -64,8 +64,17 @@ def get_client() -> OpenAI:
     return _client
 
 
-def complete_json(*, system: str, user: str, schema: type[T], max_retries: int = 1) -> T:
+def complete_json(
+    *, system: str, user: str, schema: type[T], model: str | None = None, max_retries: int = 1
+) -> T:
     """Ask the model for one JSON object, validated against `schema`.
+
+    `model` lets a caller pick which LLM answers this specific call (e.g. the
+    optional `model` query param on /message and /advise, threaded down
+    through extract_message/extract_location_text/LocationResolver.resolve/
+    moderate). When omitted - the batch ingest job, which has no per-request
+    caller to ask - Settings.model (OPENAI_MODEL) is used instead, unchanged
+    from before.
 
     One retry on a malformed response is usually enough - the schema shape is
     already spelled out in the prompt by the caller. After that, LLMError is
@@ -73,12 +82,13 @@ def complete_json(*, system: str, user: str, schema: type[T], max_retries: int =
     """
     settings = get_settings()
     client = get_client()
+    resolved_model = model or settings.model
     last_error: Exception | None = None
 
     for attempt in range(max_retries + 1):
         try:
             response = client.chat.completions.create(
-                model=settings.model,
+                model=resolved_model,
                 temperature=0,
                 response_format={"type": "json_object"},
                 messages=[

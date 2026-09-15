@@ -3,5 +3,28 @@
 
 llmhack-team-3.hackathon.intlab.ch {
     tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
-    reverse_proxy api:8080
+
+    # API routes are served directly at the root by FastAPI (no /api prefix -
+    # see app/main.py, app/api/*.py). Everything else falls through to the
+    # Angular SPA served by nginx (see frontend service in compose.yaml).
+    handle /health* {
+        reverse_proxy api:8080
+    }
+    handle /message* {
+        reverse_proxy api:8080
+    }
+    handle /advise* {
+        reverse_proxy api:8080
+    }
+    handle /docs* {
+        reverse_proxy api:8080
+    }
+    handle /openapi.json {
+        reverse_proxy api:8080
+    }
+
+    handle {
+        reverse_proxy frontend:80
+    }
 }
+

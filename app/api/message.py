@@ -1,16 +1,20 @@
-"""POST /message.
+"""POST /message?model=....
 
-Pipeline (spec §4): validate -> LLM extraction (translation to English
-included) -> LocationResolver -> ThreatEvent -> Postgres. If the message is
-not relevant, or names no location that resolves to a real city, nothing is
-created - and the response says nothing about which happened: see
+Pipeline (spec §4): validate -> moderation gate -> LLM extraction (translation
+to English included) -> LocationResolver -> ThreatEvent -> Postgres. If the
+message is not relevant, or names no location that resolves to a real city,
+nothing is created - and the response says nothing about which happened: see
 MessageResponse for why (reporting the outcome would turn this endpoint into
 an oracle for probing the extractor).
+
+`model` (optional query param, defaults to DEFAULT_LLM_MODEL - Qwen) picks
+which LLM answers every call made while handling this request (moderation,
+extraction, and location resolution downstream).
 """
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg import Connection
 
 from app.db.database import get_db
@@ -19,7 +23,7 @@ from app.events.repository import ThreatEventRepository
 from app.llm.message_extractor import extract_message
 from app.llm.moderation import moderate
 from app.location.resolver import LocationResolver
-from app.models.api import MessageRequest, MessageResponse
+from app.models.api import DEFAULT_LLM_MODEL, LLMModel, MessageRequest, MessageResponse
 from app.models.threat import ThreatEvent
 
 logger = logging.getLogger(__name__)
@@ -29,19 +33,23 @@ router = APIRouter()
 
 @router.post("/message", response_model=MessageResponse)
 def receive_message(
-    request: MessageRequest, conn: Connection = Depends(get_db)
+    request: MessageRequest,
+    model: LLMModel = Query(
+        DEFAULT_LLM_MODEL, description="Which LLM answers the calls made for this request."
+    ),
+    conn: Connection = Depends(get_db),
 ) -> MessageResponse:
     # Never log request.text itself, even at DEBUG: unlike /advise's query,
     # this can be a real private report from the corpus, not just the live
     # caller's own words - same reason it never reaches threat_events either.
-    logger.debug("message: timestamp=%s text_length=%d", request.timestamp, len(request.text))
+    logger.debug("message: model=%s timestamp=%s text_length=%d", model.value, request.timestamp, len(request.text))
 
-    moderation = moderate(request.text)
+    moderation = moderate(request.text, model.value)
     if not moderation.allowed:
         logger.info("message: blocked by moderation")
         raise HTTPException(status_code=403, detail=moderation.message or "Request blocked.")
 
-    extraction = extract_message(request.text)
+    extraction = extract_message(request.text, model.value)
     logger.debug(
         "message: relevant=%s threat_type=%s location=%r movement=%s direction=%s confidence=%.2f",
         extraction.relevant,
@@ -53,7 +61,7 @@ def receive_message(
     )
 
     if extraction.relevant and extraction.location:
-        location = LocationResolver(conn).resolve(extraction.location)
+        location = LocationResolver(conn).resolve(extraction.location, model.value)
         if location is not None:
             logger.debug("message: resolved location=%s (id=%s) -> creating ThreatEvent", location.city, location.id)
             ThreatEventRepository(conn).insert(

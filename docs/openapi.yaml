@@ -16,6 +16,8 @@ paths:
         ThreatEvent. The response deliberately never reveals whether the
         message was relevant or whether an event was created, so the endpoint
         cannot be used to probe the extractor.
+      parameters:
+        - $ref: "#/components/parameters/Model"
       requestBody:
         required: true
         content:
@@ -46,7 +48,7 @@ paths:
               example:
                 detail: "Nice try. This drone is not for you to pilot."
         "422":
-          description: Validation error (e.g. empty text).
+          description: Validation error (e.g. empty text, or an unrecognized model).
           content:
             application/json:
               schema:
@@ -63,6 +65,8 @@ paths:
         and threat events are never evaluated and the response comes back
         with `status: "need_location"` and every threat field set to null -
         an unresolved city must never read as a safe one.
+      parameters:
+        - $ref: "#/components/parameters/Model"
       requestBody:
         required: true
         content:
@@ -136,7 +140,7 @@ paths:
               example:
                 detail: "Nice try. This drone is not for you to pilot."
         "422":
-          description: Validation error (e.g. empty query, malformed as_of).
+          description: Validation error (e.g. empty query, malformed as_of, or an unrecognized model).
           content:
             application/json:
               schema:
@@ -165,7 +169,30 @@ paths:
           description: Database unreachable.
 
 components:
+  parameters:
+    Model:
+      name: model
+      in: query
+      required: false
+      description: >
+        Which LLM answers every model call made while handling this request
+        (moderation, extraction, and/or location resolution). Defaults to
+        "Qwen/Qwen3.8-Flash-Next" when omitted.
+      schema:
+        $ref: "#/components/schemas/LLMModel"
+        default: "Qwen/Qwen3.8-Flash-Next"
+      example: "google/gemma-4-31B-it"
+
   schemas:
+    LLMModel:
+      type: string
+      description: The LLMs the caller may pick between.
+      enum:
+        - "google/gemma-4-31B-it"
+        - "Qwen/Qwen3.8-Flash-Next"
+        - "mistralai/Mistral-Medium-3.5-128B"
+      default: "Qwen/Qwen3.8-Flash-Next"
+
     HTTPError:
       type: object
       description: Default FastAPI shape for a raised HTTPException.

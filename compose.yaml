@@ -20,6 +20,7 @@ services:
       - /etc/tls/llmhack/privkey.pem:/etc/caddy/certs/privkey.pem:ro
     depends_on: 
       - api
+      - frontend
 
   db:
     image: postgres:17-alpine
@@ -89,6 +90,23 @@ services:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Angular SPA, built and served by nginx (see /home/vmadmin/frontend/Dockerfile
+  # on the VM). Not published directly: the proxy service reverse-proxies to it
+  # on the same hostname as the API (see Caddyfile), so the browser only ever
+  # talks to port 443.
+  frontend:
+    build:
+      context: /home/vmadmin/frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:80"]
       interval: 10s
       timeout: 5s
       retries: 5

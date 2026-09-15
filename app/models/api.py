@@ -5,6 +5,7 @@ Every string produced here is English.
 """
 
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -12,6 +13,23 @@ from pydantic import BaseModel, Field, field_validator
 from app.models.threat import ThreatLevel
 
 NEED_LOCATION_ADVICE = "Please specify the Ukrainian city you are currently in."
+
+
+class LLMModel(str, Enum):
+    """The LLMs the caller may pick between, via the optional `model` query
+    param on /message and /advise. Its value is passed verbatim to the
+    OpenAI-compatible endpoint (app/llm/client.py) as the `model` field of
+    the completion call - never hardcoded elsewhere, so adding a model only
+    means adding a member here. When the caller omits `model`, DEFAULT_LLM_MODEL
+    (Qwen) is used.
+    """
+
+    GEMMA = "google/gemma-4-31B-it"
+    QWEN = "Qwen/Qwen3.8-Flash-Next"
+    MISTRAL = "mistralai/Mistral-Medium-3.5-128B"
+
+
+DEFAULT_LLM_MODEL = LLMModel.QWEN
 
 
 def _to_naive_utc(value: datetime) -> datetime:
