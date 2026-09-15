@@ -5,28 +5,22 @@ policy for /advise (how far back "recent enough" reaches).
 Deliberately simple: group by (threat_type, movement, direction) - events are
 already for one specific resolved location, since that is how
 ThreatEventRepository.find_for_location() fetches them - within the
-freshness window, and combine into one confidence that:
-
-  - never lets sheer message count alone approach certainty: a capped
-    corroboration bonus, not "50 messages = 100%" (the absolute rule of
-    spec §16);
-  - fades toward 0 as the group's most recent event ages, over
-    window_minutes - shorter than the hard freshness cutoff below, so a
-    signal quietly loses weight well before it would be dropped outright.
+freshness window, and combine into one confidence that never lets sheer
+message count alone approach certainty: a capped corroboration bonus, not
+"50 messages = 100%" (the absolute rule of spec §16).
 
 Not built here: clustering events into separate temporal "waves" of the same
-(threat_type, movement, direction) - the decay above already makes a stale
-early report count for little once fresher ones exist. Revisit only if the
-real corpus shows this matters; don't over-engineer this part upfront.
+(threat_type, movement, direction), or fading confidence as events age within
+the window. Revisit only if the real corpus shows this matters; don't
+over-engineer this part upfront.
 
 freshness_cutoff() is one fixed window before as_of, no per-threat-type
 tuning: events strictly older than it are dropped entirely by
 app/events/repository.py - too old to say anything about the situation right
-now.
+now. That hard cutoff is the only freshness policy here.
 
-Pure: takes plain ThreatEvents and a window, no DB or LLM involved, no
-Settings read - the caller passes get_settings().signal_window_minutes /
-get_settings().event_max_age_minutes.
+Pure: takes plain ThreatEvents, no DB or LLM involved, no Settings read - the
+caller passes get_settings().event_max_age_minutes.
 """
 
 from collections import defaultdict
@@ -67,30 +61,16 @@ def _group_by_type_movement_direction(events: list[ThreatEvent]) -> dict[_GroupK
     return groups
 
 
-def _decay(last_seen: datetime, as_of: datetime, window_minutes: int) -> float:
-    if window_minutes <= 0:
-        return 0.0
-    age_minutes = (as_of - last_seen).total_seconds() / 60
-    return max(0.0, 1.0 - age_minutes / window_minutes)
-
-
-def _confidence(group: list[ThreatEvent], last_seen: datetime, as_of: datetime, window_minutes: int) -> float:
+def _confidence(group: list[ThreatEvent]) -> float:
     base = max(event.confidence for event in group)
     corroboration = min(_CORROBORATION_CAP, (len(group) - 1) * _CORROBORATION_STEP)
-    return min(1.0, (base + corroboration) * _decay(last_seen, as_of, window_minutes))
+    return min(1.0, base + corroboration)
 
 
-def _build_signal(
-    key: _GroupKey, group: list[ThreatEvent], as_of: datetime, window_minutes: int
-) -> ThreatSignal | None:
-    """None when the group has fully decayed to zero confidence - nothing
-    left in it for the ThreatEngine to act on."""
+def _build_signal(key: _GroupKey, group: list[ThreatEvent]) -> ThreatSignal:
     threat_type, movement, direction = key
     last_seen = max(event.timestamp for event in group)
-    confidence = _confidence(group, last_seen, as_of, window_minutes)
-
-    if confidence <= 0.0:
-        return None
+    confidence = _confidence(group)
 
     return ThreatSignal(
         threat_type=threat_type,
@@ -102,15 +82,12 @@ def _build_signal(
     )
 
 
-def aggregate(
-    events: list[ThreatEvent], as_of: datetime, window_minutes: int
-) -> list[ThreatSignal]:
+def aggregate(events: list[ThreatEvent]) -> list[ThreatSignal]:
     """events must already be geographically and temporally filtered (see
     app/events/repository.py + freshness_cutoff) - this only groups and
     scores them."""
     groups = _group_by_type_movement_direction(events)
-    signals = (_build_signal(key, group, as_of, window_minutes) for key, group in groups.items())
-    return [signal for signal in signals if signal is not None]
+    return [_build_signal(key, group) for key, group in groups.items()]
 
 
 def freshness_cutoff(as_of: datetime, max_age_minutes: int) -> datetime:

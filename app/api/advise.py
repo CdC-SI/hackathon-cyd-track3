@@ -101,7 +101,7 @@ def advise(
     events = ThreatEventRepository(conn).find_for_location(location.id, request.as_of, since=since)
     logger.debug("advise: %d threat event(s) since %s", len(events), since)
 
-    signals = aggregate(events, request.as_of, settings.signal_window_minutes)
+    signals = aggregate(events)
     logger.debug("advise: aggregated into %d signal(s): %s", len(signals), signals)
 
     assessment = assess(

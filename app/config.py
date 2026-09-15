@@ -34,7 +34,6 @@ class Settings(BaseSettings):
 
     # Freshness policy (used from step 10 on). Here so it stays tunable.
     event_max_age_minutes: int = 120
-    signal_window_minutes: int = 30
 
     # ThreatEngine (step 11): the minimum confidence an INBOUND signal needs
     # to raise ALERT on its own, absent any siren. Below this, it still
