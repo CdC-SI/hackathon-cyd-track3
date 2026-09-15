@@ -1,0 +1,110 @@
+# db-init loads locations.json at every startup: cheap (a few hundred rows, no
+# LLM call). ingest re-reads sirens.csv (also cheap) then messages.csv - the
+# first run pays for the full corpus through the LLM, every run after that
+# costs nothing extra (see app/events/importer.py): already-processed
+# messages are skipped by their content hash. Run only one job on its own
+# with `docker compose run --rm db-init` / `ingest`.
+#
+# db-init and ingest are jobs: they run once per `up` and exit, so
+# `restart: "no"`. db and api are long-running, so `restart: unless-stopped`.
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db-init:
+    build:
+      context: .
+      target: base  # not the last stage: without this, build: . would pick up `test`
+      secrets:
+        - ca_bundle
+    env_file: .env
+    volumes:
+      - ${LOCATIONS_HOST_PATH}:${LOCATIONS_JSON}:ro
+    command: ["python", "-m", "app.jobs.db_init"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ingest:
+    build:
+      context: .
+      target: base
+      secrets:
+        - ca_bundle
+    env_file: .env
+    volumes:
+      - ${SIRENS_HOST_PATH}:${SIRENS_CSV}:ro
+      - ${MESSAGES_HOST_PATH}:${MESSAGES_CSV}:ro
+      # Optional CA bundle for the LLM call (see app/llm/client.py). The
+      # /dev/null:/dev/null fallback keeps this mount a harmless no-op when
+      # CA_BUNDLE_HOST_PATH/CA_BUNDLE are unset - Compose can't skip a
+      # volume entry conditionally, so both sides default to the same
+      # always-present path instead.
+      - ${CA_BUNDLE_HOST_PATH:-/dev/null}:${CA_BUNDLE:-/dev/null}:ro
+    command: ["python", "-m", "app.jobs.ingest"]
+    restart: "no"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+
+  api:
+    build:
+      context: .
+      target: base
+      secrets:
+        - ca_bundle
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      # See the same entry on `ingest` for why this is always present.
+      - ${CA_BUNDLE_HOST_PATH:-/dev/null}:${CA_BUNDLE:-/dev/null}:ro
+    depends_on:
+      ingest:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Not started by `docker compose up` (dev profile).
+  # Run with: docker compose run --rm test
+  test:
+    build:
+      context: .
+      target: test
+      secrets:
+        - ca_bundle
+    profiles: ["dev"]
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./app:/srv/app
+      - ./tests:/srv/tests
+
+volumes:
+  pgdata:
+
+secrets:
+  # Build-time only (see Dockerfile). Falls back to /dev/null - always
+  # present, reads as empty - when CA_BUNDLE_HOST_PATH is unset, so this is
+  # a genuine no-op for anyone who doesn't need it.
+  ca_bundle:
+    file: ${CA_BUNDLE_HOST_PATH:-/dev/null}
