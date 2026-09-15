@@ -40,6 +40,11 @@ job on its own during development: `docker compose run --rm db-init` / `ingest`.
 | POST   | `/message` | ingest one private report                    |
 | POST   | `/advise`  | advise for a location and an instant         |
 
+Both `/message` and `/advise` take an optional `model` query param picking which LLM
+answers the calls made for that request, e.g. `POST /advise?model=mistralai/Mistral-Medium-3.5-128B`.
+Allowed values are the `LLMModel` enum members (`app/models/api.py`); omitted, it defaults
+to `DEFAULT_LLM_MODEL` (Qwen).
+
 ## Tests
 
 Everything runs in Docker, nothing to install on the host:
