@@ -10,13 +10,14 @@ an oracle for probing the extractor).
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from psycopg import Connection
 
 from app.db.database import get_db
 from app.events.hashing import message_hash
 from app.events.repository import ThreatEventRepository
 from app.llm.message_extractor import extract_message
+from app.llm.moderation import moderate
 from app.location.resolver import LocationResolver
 from app.models.api import MessageRequest, MessageResponse
 from app.models.threat import ThreatEvent
@@ -34,6 +35,11 @@ def receive_message(
     # this can be a real private report from the corpus, not just the live
     # caller's own words - same reason it never reaches threat_events either.
     logger.debug("message: timestamp=%s text_length=%d", request.timestamp, len(request.text))
+
+    moderation = moderate(request.text)
+    if not moderation.allowed:
+        logger.info("message: blocked by moderation")
+        raise HTTPException(status_code=403, detail=moderation.message or "Request blocked.")
 
     extraction = extract_message(request.text)
     logger.debug(

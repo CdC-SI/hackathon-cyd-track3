@@ -8,6 +8,19 @@
 # db-init and ingest are jobs: they run once per `up` and exit, so
 # `restart: "no"`. db and api are long-running, so `restart: unless-stopped`.
 services:
+  proxy:
+    image: caddy:latest
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/tls/llmhack/fullchain.pem:/etc/caddy/certs/fullchain.pem:ro
+      - /etc/tls/llmhack/privkey.pem:/etc/caddy/certs/privkey.pem:ro
+    depends_on: 
+      - api
+
   db:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -68,8 +81,6 @@ services:
         - ca_bundle
     restart: unless-stopped
     env_file: .env
-    ports:
-      - "8080:8080"
     volumes:
       # See the same entry on `ingest` for why this is always present.
       - ${CA_BUNDLE_HOST_PATH:-/dev/null}:${CA_BUNDLE:-/dev/null}:ro

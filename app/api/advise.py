@@ -16,13 +16,14 @@ parameters rather than looking up themselves.
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from psycopg import Connection
 
 from app.advice.builder import build_advice
 from app.config import Settings, get_settings
 from app.db.database import get_db
 from app.events.repository import ThreatEventRepository
+from app.llm.moderation import moderate
 from app.location.query_extractor import extract_location_text
 from app.location.resolver import LocationResolver
 from app.models.api import AdviseRequest, AdviseResponse
@@ -67,6 +68,11 @@ def advise(
     # text - logged in full at DEBUG (opt-in, operator's own environment).
     # request.text on /message is a different story: see its own module.
     logger.debug("advise: query=%r as_of=%s location=%r", request.query, request.as_of, request.location)
+
+    moderation = moderate(request.query)
+    if not moderation.allowed:
+        logger.info("advise: blocked by moderation")
+        raise HTTPException(status_code=403, detail=moderation.message or "Request blocked.")
 
     location = resolve_advise_location(conn, request)
     if location is None:

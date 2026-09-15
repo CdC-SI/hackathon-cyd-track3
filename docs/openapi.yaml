@@ -34,6 +34,17 @@ paths:
                 $ref: "#/components/schemas/MessageResponse"
               example:
                 status: "accepted"
+        "403":
+          description: >
+            Blocked by the moderation gate: the text was judged to be an
+            attack (prompt injection, jailbreak, etc.) rather than a genuine
+            report. `detail` carries a short message aimed at the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+              example:
+                detail: "Nice try. This drone is not for you to pilot."
         "422":
           description: Validation error (e.g. empty text).
           content:
@@ -112,6 +123,18 @@ paths:
                     siren_active: null
                     citations: null
                     threat_level: null
+        "403":
+          description: >
+            Blocked by the moderation gate: `query` was judged to be an
+            attack (prompt injection, jailbreak, etc.) rather than a genuine
+            report or safety question. `detail` carries a short message
+            aimed at the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+              example:
+                detail: "Nice try. This drone is not for you to pilot."
         "422":
           description: Validation error (e.g. empty query, malformed as_of).
           content:
@@ -143,6 +166,13 @@ paths:
 
 components:
   schemas:
+    HTTPError:
+      type: object
+      description: Default FastAPI shape for a raised HTTPException.
+      properties:
+        detail:
+          type: string
+
     HTTPValidationError:
       type: object
       description: Default FastAPI/Pydantic validation error shape.

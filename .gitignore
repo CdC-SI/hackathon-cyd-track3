@@ -6,3 +6,5 @@ __pycache__/
 *.egg-info/
 /todo
 /tests
+
+/tests_greg
