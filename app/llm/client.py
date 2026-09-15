@@ -87,6 +87,9 @@ def complete_json(
 
     for attempt in range(max_retries + 1):
         try:
+            logger.info(
+                "LLM call (attempt %d): requesting model=%s", attempt + 1, resolved_model
+            )
             response = client.chat.completions.create(
                 model=resolved_model,
                 temperature=0,
@@ -96,6 +99,18 @@ def complete_json(
                     {"role": "user", "content": user},
                 ],
             )
+            # response.model is the model the endpoint actually answered
+            # with, verbatim from the API - not just an echo of the request.
+            # Logged so a mismatch (e.g. the gateway silently falling back
+            # to another model) is visible instead of assumed away.
+            if response.model != resolved_model:
+                logger.warning(
+                    "LLM call: requested model=%s but endpoint answered with model=%s",
+                    resolved_model,
+                    response.model,
+                )
+            else:
+                logger.info("LLM call: confirmed answered by model=%s", response.model)
             content = response.choices[0].message.content or ""
             return schema.model_validate_json(content)
         except (ValidationError, ValueError) as exc:
