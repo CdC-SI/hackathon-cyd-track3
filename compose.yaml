@@ -101,7 +101,7 @@ services:
   # talks to port 443.
   frontend:
     build:
-      context: /home/vmadmin/frontend
+      context: /home/vmadmin/hackathon-cyd-frontend
     restart: unless-stopped
     depends_on:
       - api
