@@ -20,7 +20,6 @@ services:
       - /etc/tls/llmhack/privkey.pem:/etc/caddy/certs/privkey.pem:ro
     depends_on: 
       - api
-      - frontend
 
   db:
     image: postgres:17-alpine
@@ -99,18 +98,18 @@ services:
   # on the VM). Not published directly: the proxy service reverse-proxies to it
   # on the same hostname as the API (see Caddyfile), so the browser only ever
   # talks to port 443.
-  frontend:
-    build:
-      context: /home/vmadmin/hackathon-cyd-frontend
-    restart: unless-stopped
-    depends_on:
-      - api
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:80"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+#  frontend:
+#    build:
+#      context: /home/vmadmin/hackathon-cyd-frontend
+#    restart: unless-stopped
+#    depends_on:
+#      - api
+#    healthcheck:
+#      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:80"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+#      start_period: 10s
 
   # Not started by `docker compose up` (dev profile).
   # Run with: docker compose run --rm test
